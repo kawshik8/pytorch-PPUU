@@ -610,9 +610,10 @@ class FwdCNN_VAE(nn.Module):
         else:
             return mu
 
-    def sample_z(self, bsize, method=None, h_x=None):
+    def sample_z(self, bsize, method=None, h_x=None, no_cuda=False):
+        device = torch.device('cuda' if torch.cuda.is_available() and not no_cuda else 'cpu')
         if self.opt.model == 'fwd-cnn-vae-fp':
-            z = torch.randn(bsize, self.opt.nz).cuda()
+            z = torch.randn(bsize, self.opt.nz).to(device)
         elif self.opt.model == 'fwd-cnn-vae-lp':
             mu_logvar_prior = self.z_network_prior(h_x.view(bsize, -1)).view(bsize, 2, self.opt.nz)
             mu_prior = mu_logvar_prior[:, 0]

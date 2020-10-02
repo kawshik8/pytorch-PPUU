@@ -50,11 +50,12 @@ def read_images(dirname, pytorch=True):
     return imgs
 
 
-def lane_cost(images, car_size):
+def lane_cost(images, car_size, no_cuda=False):
     SCALE = 0.25
     safe_factor = 1.5
     bsize, npred, nchannels, crop_h, crop_w = images.size()
     images = images.view(bsize * npred, nchannels, crop_h, crop_w)
+    device = torch.device('cuda' if torch.cuda.is_available() and not no_cuda else 'cpu')
 
     width, length = car_size[:, 0], car_size[:, 1]  # feet
     width = width * SCALE * (0.3048 * 24 / 3.7)  # pixels
@@ -66,24 +67,24 @@ def lane_cost(images, car_size):
     max_x = torch.ceil((crop_h - length) / 2)
     #    max_y = torch.ceil((crop_w - width) / 2)
     max_y = torch.ceil(torch.zeros(width.size()).fill_(crop_w) / 2)
-    max_x = max_x.view(bsize, 1).expand(bsize, npred).contiguous().view(bsize * npred).cuda()
-    max_y = max_y.view(bsize, 1).expand(bsize, npred).contiguous().view(bsize * npred).cuda()
+    max_x = max_x.view(bsize, 1).expand(bsize, npred).contiguous().view(bsize * npred).float().to(device)
+    max_y = max_y.view(bsize, 1).expand(bsize, npred).contiguous().view(bsize * npred).float().to(device)
     min_x = max_x
     min_y = torch.ceil(crop_w / 2 - width)  # assumes other._width / 2 = self._width / 2
-    min_y = min_y.view(bsize, 1).expand(bsize, npred).contiguous().view(bsize * npred).cuda()
+    min_y = min_y.view(bsize, 1).expand(bsize, npred).contiguous().view(bsize * npred).float().to(device)
     x_filter = (1 - torch.abs(torch.linspace(-1, 1, crop_h))) * crop_h / 2
 
-    x_filter = x_filter.unsqueeze(0).expand(bsize * npred, crop_h).cuda()
+    x_filter = x_filter.unsqueeze(0).expand(bsize * npred, crop_h).float().to(device)
     x_filter = torch.min(x_filter, max_x.view(bsize * npred, 1).expand(x_filter.size()))
     x_filter = (x_filter == max_x.unsqueeze(1).expand(x_filter.size())).float()
 
     y_filter = (1 - torch.abs(torch.linspace(-1, 1, crop_w))) * crop_w / 2
-    y_filter = y_filter.view(1, crop_w).expand(bsize * npred, crop_w).cuda()
+    y_filter = y_filter.view(1, crop_w).expand(bsize * npred, crop_w).to(device)
     #    y_filter = torch.min(y_filter, max_y.view(bsize * npred, 1))
     y_filter = torch.max(y_filter, min_y.view(bsize * npred, 1))
     y_filter = (y_filter - min_y.view(bsize * npred, 1)) / (max_y.view(bsize * npred, 1) - min_y.view(bsize * npred, 1))
-    x_filter = x_filter.cuda()
-    y_filter = y_filter.cuda()
+    x_filter = x_filter.to(device)
+    y_filter = y_filter.to(device)
     proximity_mask = torch.bmm(x_filter.view(-1, crop_h, 1), y_filter.view(-1, 1, crop_w))
     proximity_mask = proximity_mask.view(bsize, npred, crop_h, crop_w)
     images = images.view(bsize, npred, nchannels, crop_h, crop_w)
@@ -98,16 +99,18 @@ def offroad_cost(images, proximity_mask):
     return costs.view(bsize, npred)
 
 
-def proximity_cost(images, states, car_size=(6.4, 14.3), green_channel=1, unnormalize=False, s_mean=None, s_std=None):
+def proximity_cost(images, states, car_size=(6.4, 14.3), green_channel=1, unnormalize=False, s_mean=None, s_std=None, no_cuda=False):
     SCALE = 0.25
     safe_factor = 1.5
     bsize, npred, nchannels, crop_h, crop_w = images.size()
     images = images.view(bsize * npred, nchannels, crop_h, crop_w)
     states = states.view(bsize * npred, 4).clone()
 
+    device = torch.device('cuda' if torch.cuda.is_available() and not no_cuda else 'cpu')
+
     if unnormalize:
-        states = states * (1e-8 + s_std.view(1, 4).expand(states.size())).cuda()
-        states = states + s_mean.view(1, 4).expand(states.size()).cuda()
+        states = states * (1e-8 + s_std.view(1, 4).expand(states.size())).to(device)
+        states = states + s_mean.view(1, 4).expand(states.size()).to(device)
 
     speed = states[:, 2:].norm(2, 1) * SCALE  # pixel/s
     width, length = car_size[:, 0], car_size[:, 1]  # feet
@@ -123,26 +126,26 @@ def proximity_cost(images, states, car_size=(6.4, 14.3), green_channel=1, unnorm
 
     max_x = torch.ceil((crop_h - torch.clamp(length - alpha, min=0)) / 2)
     max_y = torch.ceil((crop_w - torch.clamp(width - alpha, min=0)) / 2)
-    max_x = max_x.view(bsize, 1).expand(bsize, npred).contiguous().view(bsize * npred).cuda()
-    max_y = max_y.view(bsize, 1).expand(bsize, npred).contiguous().view(bsize * npred).cuda()
+    max_x = max_x.view(bsize, 1).expand(bsize, npred).contiguous().view(bsize * npred).type(torch.float).to(device)
+    max_y = max_y.view(bsize, 1).expand(bsize, npred).contiguous().view(bsize * npred).type(torch.float).to(device)
 
-    min_x = torch.clamp(max_x - safe_distance, min=0)
+    min_x = torch.clamp(max_x - safe_distance, min=0).type(torch.float)
     min_y = torch.ceil(crop_w / 2 - width)  # assumes other._width / 2 = self._width / 2
-    min_y = min_y.view(bsize, 1).expand(bsize, npred).contiguous().view(bsize * npred).cuda()
+    min_y = min_y.view(bsize, 1).expand(bsize, npred).contiguous().view(bsize * npred).type(torch.float).to(device)
 
     x_filter = (1 - torch.abs(torch.linspace(-1, 1, crop_h))) * crop_h / 2
-    x_filter = x_filter.unsqueeze(0).expand(bsize * npred, crop_h).cuda()
+    x_filter = x_filter.unsqueeze(0).expand(bsize * npred, crop_h).to(device)
     x_filter = torch.min(x_filter, max_x.view(bsize * npred, 1).expand(x_filter.size()))
     x_filter = torch.max(x_filter, min_x.view(bsize * npred, 1))
 
     x_filter = (x_filter - min_x.view(bsize * npred, 1)) / (max_x - min_x).view(bsize * npred, 1)
     y_filter = (1 - torch.abs(torch.linspace(-1, 1, crop_w))) * crop_w / 2
-    y_filter = y_filter.view(1, crop_w).expand(bsize * npred, crop_w).cuda()
+    y_filter = y_filter.view(1, crop_w).expand(bsize * npred, crop_w).to(device)
     y_filter = torch.min(y_filter, max_y.view(bsize * npred, 1))
     y_filter = torch.max(y_filter, min_y.view(bsize * npred, 1))
     y_filter = (y_filter - min_y.view(bsize * npred, 1)) / (max_y.view(bsize * npred, 1) - min_y.view(bsize * npred, 1))
-    x_filter = x_filter.cuda()
-    y_filter = y_filter.cuda()
+    x_filter = x_filter.to(device)
+    y_filter = y_filter.to(device)
     proximity_mask = torch.bmm(x_filter.view(-1, crop_h, 1), y_filter.view(-1, 1, crop_w))
     proximity_mask = proximity_mask.view(bsize, npred, crop_h, crop_w)
     images = images.view(bsize, npred, nchannels, crop_h, crop_w)
@@ -476,8 +479,10 @@ def parse_command_line(parser=None):
     parser.add_argument('-dataset', type=str, default='i80')
     parser.add_argument('-v', type=int, default=4)
     parser.add_argument('-model', type=str, default='fwd-cnn')
+    parser.add_argument('-method', type=str, default='train', choices=["train","finetune"], help="choose between training and finetuning")
     parser.add_argument('-policy', type=str, default='policy-deterministic')
     parser.add_argument('-model_dir', type=str, default='models/')
+    parser.add_argument('-data_dir', type=str, default='./')
     parser.add_argument('-ncond', type=int, default=20)
     parser.add_argument('-npred', type=int, default=30)
     parser.add_argument('-layers', type=int, default=3)
