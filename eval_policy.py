@@ -30,6 +30,7 @@ class SimulationResult:
     def __init__(self):
         self.action_sequence = None
         self.state_sequence = None
+        # self.image_sequence = None
         self.road_completed = None
         self.distance_travelled = None
         self.time_travelled = None
@@ -41,6 +42,7 @@ class SimulationResult:
         result = SimulationResult()
         result.action_sequence = torch.rand((20, 800))
         result.state_sequence = []
+        # result.image_sequence = []
         result.road_completed = 1
         result.distance_travelled = 100
         result.time_travelled = 100
@@ -112,6 +114,17 @@ def load_models(opt, data_path, device='cuda'):
     if 'ten' in opt.mfile:
         forward_model.p_z = torch.load(
             path.join(opt.model_dir, f'{opt.mfile}.pz'))
+        
+    if not hasattr("forward_model.encoder","n_channels"):
+        forward_model.encoder.n_channels = 3
+        
+#     print(forward_model.policy_net.encoder.f_encoder)
+    if not hasattr("forward_model.policy_net.encoder","n_channels"):
+        forward_model.policy_net.encoder.n_channels = 4
+        
+    forward_model.opt.lambda_l = opt.lambda_l  # used by planning.py/compute_uncertainty_batch
+    forward_model.opt.lambda_o = opt.lambda_o  # used by planning.py/compute_uncertainty_batch
+        
     return (
         forward_model,
         value_function,
@@ -209,8 +222,9 @@ def parse_args():
     M5 = 'model=fwd-cnn-vae-fp-layers=3-bsize=64-ncond=20-npred=20-lrt=0.0001-nfeature=256-dropout=0.1-nz=32-' + \
          'beta=1e-06-zdropout=0.5-gclip=5.0-warmstart=1-seed=1.step400000.model'
     parser.add_argument('-mfile', type=str, default=M5, help=' ')
+    parser.add_argument('-training-method', type=str, default='train', choices=["train","finetune_train","finetune_sim"], help="choose between training and finetuning")
     parser.add_argument('-value_model', type=str, default='', help=' ')
-    parser.add_argument('-policy_model', type=str, default='', help=' ')
+    parser.add_argument('-policy-model', type=str, default='', help=' ')
     parser.add_argument('-save_sim_video', action='store_true',
                         help='Save simulator video in <frames> info attribute')
     parser.add_argument('-enable_tensorboard', action='store_true',
@@ -265,7 +279,7 @@ def process_one_episode(opt,
     cntr = 0
     # inputs, cost, done, info = env.step(numpy.zeros((2,)))
     input_state_t0 = inputs['state'].contiguous()[-1]
-    cost_sequence, action_sequence, state_sequence = [], [], []
+    cost_sequence, action_sequence, state_sequence, image_sequence = [], [], [], []
     has_collided = False
     off_screen = False
     while not done:
@@ -326,7 +340,29 @@ def process_one_episode(opt,
                 normalize_inputs=True,
                 normalize_outputs=True
             )
-            a = a.cpu().view(1, 2).numpy()
+            a = a.cpu().view(1, 2).numpy()    
+#         elif opt.method == 'bprop+policy-MPUR':
+#             a, entropy, mu, std = forward_model.policy_net(
+#                 input_images,
+#                 input_states,
+#                 sample=True,
+#                 normalize_inputs=True,
+#                 normalize_outputs=True
+#             )
+# #             a = a[0]
+#             a = forward_model.plan_actions_backprop(
+#                 input_images,
+#                 input_states,
+#                 npred=opt.npred,
+#                 n_futures=opt.n_rollouts,
+#                 normalize=True,
+#                 bprop_niter=opt.bprop_niter,
+#                 bprop_lrt=opt.bprop_lrt,
+#                 actions=a,
+#                 u_reg=opt.u_reg,
+#                 nexec=opt.nexec
+#             )
+#             a = a.cpu().view(1, 2).numpy()
         elif opt.method == 'bprop+policy-IL':
             _, _, _, a = policy_network_il(
                 input_images,
@@ -351,6 +387,7 @@ def process_one_episode(opt,
 
         action_sequence.append(a)
         state_sequence.append(input_states)
+        # image_sequence.append(input_images)
         cntr += 1
         cost_test = 0
         t = 0
@@ -432,6 +469,8 @@ def process_one_episode(opt,
     returned.action_sequence = numpy.stack(action_sequence)
     returned.state_sequence = numpy.stack(state_sequence)
     returned.cost_sequence = numpy.stack(cost_sequence)
+    print(car_sizes)
+    # returned.image_sequence = numpy.stack(image_sequence)
 
     return returned
 
@@ -488,8 +527,10 @@ def main():
 
     # different performance metrics
     time_travelled, distance_travelled, road_completed = [], [], []
+    collided, offscreen = [], []
     # values saved for later inspection
     action_sequences, state_sequences, cost_sequences =  [], [], []
+    image_sequences = []
 
     writer = utils.create_tensorboard_writer(opt)
 
@@ -536,8 +577,13 @@ def main():
             simulation_result.action_sequence))
         state_sequences.append(torch.from_numpy(
             simulation_result.state_sequence))
+#         image_sequences.append(torch.from_numpy(
+#             simulation_result.image_sequence))
         cost_sequences.append(simulation_result.cost_sequence)
         total_images += time_travelled[-1]
+        
+        collided.append(simulation_result.has_collided)
+        offscreen.append(simulation_result.off_screen)
 
         log_string = ' | '.join((
             f'ep: {j + 1:3d}/{n_test}',
@@ -572,11 +618,13 @@ def main():
     diff_time = time.time() - time_started
     print('avg time travelled per second is', total_images / diff_time)
 
+    torch.save({"road_completed" : road_completed, "collided": collided, "offscreen": offscreen}, path.join(opt.save_dir, f'{plan_file}.others'))
     torch.save(action_sequences, path.join(
         opt.save_dir, f'{plan_file}.actions'))
     torch.save(state_sequences, path.join(opt.save_dir, f'{plan_file}.states'))
+#     torch.save(image_sequences, path.join(opt.save_dir, f'{plan_file}.images'))
     torch.save(cost_sequences, path.join(opt.save_dir, f'{plan_file}.costs'))
-
+  
     if writer is not None:
         writer.close()
 

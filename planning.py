@@ -120,9 +120,9 @@ def compute_uncertainty_batch(model, input_images, input_states, actions, target
         u_loss_images = torch.relu((pred_images_var - model.u_images_mean) / model.u_images_std - model.opt.u_hinge)
         
         if return_per_instance_values:
-            total_u_loss = u_loss_costs.mean() + u_loss_states.mean() + u_loss_images.mean()
-        else:
             total_u_loss = u_loss_costs + u_loss_states + u_loss_images
+        else:
+            total_u_loss = u_loss_costs.mean() + u_loss_states.mean() + u_loss_images.mean()
 
     else:
         total_u_loss = None

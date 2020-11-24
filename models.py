@@ -74,6 +74,7 @@ class encoder(nn.Module):
             )
 
     def forward(self, images, states=None, actions=None):
+#         print(images.shape)
         bsize = images.size(0)
         h = self.f_encoder(images.view(bsize, self.n_inputs * self.n_channels, self.opt.height, self.opt.width))
         if states is not None:
@@ -622,7 +623,8 @@ class FwdCNN_VAE(nn.Module):
         return z
 
     def forward_single_step(self, input_images, input_states, action, z):
-        # encode the inputs (without the action)
+        # encode the inputs (without the action)        
+            
         bsize = input_images.size(0)
         h_x = self.encoder(input_images, input_states)
         z_exp = self.z_expander(z).view(bsize, self.opt.nfeature, self.opt.h_height, self.opt.h_width)
@@ -640,6 +642,8 @@ class FwdCNN_VAE(nn.Module):
         return pred_image, pred_state
 
     def forward(self, inputs, actions, targets, save_z=False, sampling=None, z_dropout=0.0, z_seq=None, noise=None):
+        
+        
         input_images, input_states = inputs
         bsize = input_images.size(0)
         actions = actions.view(bsize, -1, self.opt.n_actions)
@@ -875,6 +879,7 @@ class DeterministicPolicy(nn.Module):
         self.opt = opt
         self.n_channels = n_channels
         self.encoder = encoder(opt, a_size=0, n_inputs=opt.ncond, n_channels=n_channels)
+        print("nchannels in encoder policy: ",self.encoder.nchannels)
         self.n_outputs = opt.n_actions if output_dim is None else output_dim
         self.hsize = opt.nfeature * self.opt.h_height * self.opt.h_width
         self.proj = nn.Linear(self.hsize, opt.n_hidden)

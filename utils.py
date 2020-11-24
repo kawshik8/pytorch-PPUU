@@ -265,7 +265,7 @@ def test_actions(mdir, model, inputs, actions, targets_, std=1.5):
     del pred_right, _
 
 
-def save_movie(dirname, images, states, costs=None, actions=None, mu=None, std=None, pytorch=True, raw=False):
+def save_movie(dirname, images, states, costs=None, actions=None, mu=None, std=None, pytorch=True, raw=False, four_channels=False):
     images = images.data if hasattr(images, 'data') else images
     states = states.data if hasattr(states, 'data') else states
     if costs is not None:
@@ -280,13 +280,18 @@ def save_movie(dirname, images, states, costs=None, actions=None, mu=None, std=N
         std = std.squeeze()
     else:
         mu = actions
+        
     if pytorch:
         images = images.permute(0, 2, 3, 1).cpu().numpy() * 255
+        
     if raw:
         for t in range(images.shape[0]):
             img = images[t]
             img = numpy.uint8(img)
-            Image.fromarray(img).save(path.join(dirname, f'im{t:05d}.png'))
+            if four_channels:
+                Image.fromarray(img).save(path.join(dirname, f'im{t:05d}.tiff'))
+            else:
+                Image.fromarray(img).save(path.join(dirname, f'im{t:05d}.png'))
         return
     for t in range(images.shape[0]):
         img = images[t]
@@ -478,9 +483,21 @@ def parse_command_line(parser=None):
     parser.add_argument('-seed', type=int, default=1)
     parser.add_argument('-dataset', type=str, default='i80')
     parser.add_argument('-v', type=int, default=4)
+    parser.add_argument('-policy_model', type=str, default='', help=' ')
     parser.add_argument('-model', type=str, default='fwd-cnn')
-    parser.add_argument('-method', type=str, default='train', choices=["train","finetune"], help="choose between training and finetuning")
+    parser.add_argument('-method', type=str, default='bprop', help='[bprop|policy-MPUR|policy-MPER|policy-IL]')
+    parser.add_argument('-training-method', type=str, default='train', choices=["train","finetune_train","finetune_sim"], help="choose between training and finetuning")
     parser.add_argument('-policy', type=str, default='policy-deterministic')
+    parser.add_argument('-eval-nframes-overlap', type=int, default=10)
+    parser.add_argument('-finetune-nframes-overlap', type=int, default=10)
+    parser.add_argument('-negative-mining-topn', type=float, default=0.8, help='percentage of high loss samples to choose as negatives')
+    parser.add_argument('-episode-wise-policy-stats', type=str, default='policy_loss_stats/episode_policy_stats.pkl', help=' dictionary file where episode_wise_policy_stats are stored')
+    parser.add_argument('-finetune-dict-file', type=str, default='policy_loss_stats/finetune_dict.pkl', help=' dictionary file where negative samples are stored')
+    parser.add_argument('-negative-sample-neighbourhood', type=int, default=10)
+    parser.add_argument('-finetune-earlystop-patience', type=int, default=25)
+    parser.add_argument('-policy-model', type=str, default='', help=' ')
+    parser.add_argument('-eval-nepisodes', type=int, default=-1)
+    parser.add_argument('-finetune-nepisodes', type=int, default=-1)
     parser.add_argument('-model_dir', type=str, default='models/')
     parser.add_argument('-data_dir', type=str, default='./')
     parser.add_argument('-ncond', type=int, default=20)
