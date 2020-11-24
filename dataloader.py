@@ -53,6 +53,7 @@ class DataLoader:
             road_completed = others["road_completed"]
             collided = others["collided"]
             offscreen = others["offscreen"]
+            self.car_sizes = others["car_sizes"]
             
             path = data_dir.split("/")
             model_path = path[-1]
@@ -189,6 +190,8 @@ class DataLoader:
         
                 
             car_sizes_path = data_dir + '/car_sizes.pth'
+            print(f'[loading car sizes: {car_sizes_path}]')
+            self.car_sizes = torch.load(car_sizes_path)
             
         if os.path.exists(splits_path):
             print(f'[loading data splits: {splits_path}]')
@@ -209,12 +212,8 @@ class DataLoader:
                 train_indx=self.train_indx,
                 valid_indx=self.valid_indx,
                 test_indx=self.test_indx,
-            ), splits_path)
-            
-        print(f'[loading car sizes: {car_sizes_path}]')
-        self.car_sizes = torch.load(car_sizes_path)
+            ), splits_path)     
         
-            
         stats_path = data_dir + '/data_stats.pth'
         if os.path.isfile(stats_path):
             print(f'[loading data stats: {stats_path}]')
@@ -414,16 +413,17 @@ class DataLoader:
                 
                 ego_cars.append(self.ego_car_images[s].to(device))
                 
-                if split == 'finetune_sim':
-                    splits = self.ids[self.test_indx[s]].split('/')
-                else:
-                    splits = self.ids[s].split('/')
+#                 if split == 'finetune_sim':
+#                     splits = self.ids[self.test_indx[s]].split('/')
+#                 else:
+                splits = self.ids[s].split('/')
                     
                 time_slot = splits[-2]
                 car_id = int(re.findall(r'car(\d+).pkl', splits[-1])[0])
-                
-                
-                size = self.car_sizes[]
+                if split == 'finetune_sim':
+                    size = self.car_sizes[time_slot][car_id]
+                else:
+                    size = self.car_sizes[s]
                 sizes.append([size[0], size[1]])
                 if all_batches:
                     episodes_indices[nb] = np.array([s,t])
