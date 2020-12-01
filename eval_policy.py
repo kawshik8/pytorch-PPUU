@@ -239,6 +239,9 @@ def parse_args():
     parser.add_argument('-save_grad_vid',
                         action='store_true',
                         help='save gradients wrt states')
+    parser.add_argument('-use-forward-model',
+                        action='store_true',
+                        help='use forward model or simulator for evaluation')
 
     opt = parser.parse_args()
     opt.save_dir = path.join(opt.model_dir, 'planning_results')
@@ -253,7 +256,6 @@ def parse_args():
         opt.num_processes = get_optimal_pool_size()
 
     return opt
-
 
 def process_one_episode(opt,
                         env,
@@ -273,6 +275,7 @@ def process_one_episode(opt,
     timeslot, car_id = utils.parse_car_path(car_path)
     # if None => picked at random
     inputs = env.reset(time_slot=timeslot, vehicle_id=car_id)
+#     print(torch.mean(inputs['context']), torch.mean(inputs['state']))
     forward_model.reset_action_buffer(opt.npred)
     done, mu, std = False, None, None
     images, states, costs, actions, mu_list, std_list, grad_list = [], [], [], [], [], [], []
@@ -285,6 +288,7 @@ def process_one_episode(opt,
     while not done:
         input_images = inputs['context'].contiguous()
         input_states = inputs['state'].contiguous()
+#         print(input_images.shape, input_states.shape)
         if opt.save_grad_vid:
             grad_list.append(planning.get_grad_vid(
                 forward_model, input_images, input_states,
@@ -392,31 +396,44 @@ def process_one_episode(opt,
         cost_test = 0
         t = 0
         T = opt.npred if opt.nexec == -1 else opt.nexec
-        while (t < T) and not done:
-            inputs, cost, done, info = env.step(a[t])
-            if info.collisions_per_frame > 0:
-                has_collided = True
-                # print(f'[collision after {cntr} frames, ending]')
-                done = True
-            off_screen = info.off_screen
+        if not opt.use_forward_model:
+            while (t < T) and not done:
+                inputs, cost, done, info = env.step(a[t])
+                if info.collisions_per_frame > 0:
+                    has_collided = True
+                    # print(f'[collision after {cntr} frames, ending]')
+                    done = True
+                off_screen = info.off_screen
 
-            images.append(input_images[-1])
-            states.append(input_states[-1])
-            costs.append([cost['pixel_proximity_cost'], cost['lane_cost']])
-            cost_sequence.append(cost)
-            if opt.mfile == 'no-action':
-                actions.append(a[t])
-                mu_list.append(mu)
-                std_list.append(std)
-            else:
-                actions.append(
-                    ((torch.tensor(a[t]) - data_stats['a_mean'])
-                        / data_stats['a_std'])
-                )
-                if mu is not None:
-                    mu_list.append(mu.data.cpu().numpy())
-                    std_list.append(std.data.cpu().numpy())
-            t += 1
+                images.append(input_images[-1])
+                states.append(input_states[-1])
+                costs.append([cost['pixel_proximity_cost'], cost['lane_cost']])
+                cost_sequence.append(cost)
+                if opt.mfile == 'no-action':
+                    actions.append(a[t])
+                    mu_list.append(mu)
+                    std_list.append(std)
+                else:
+                    actions.append(
+                        ((torch.tensor(a[t]) - data_stats['a_mean'])
+                            / data_stats['a_std'])
+                    )
+                    if mu is not None:
+                        mu_list.append(mu.data.cpu().numpy())
+                        std_list.append(std.data.cpu().numpy())
+                t += 1
+        else:
+            print(input_images.shape, input_states.shape, type(input_images), input_images.contiguous()[:,3:4].repeat(1,3,1,1).unsqueeze(0))
+#             print(input_images[:,:3])
+            pred, actions = planning.train_policy_net_mpur(
+                forward_model, (input_images.contiguous()[:,:3], input_states, input_images.contiguous()[:,3:4].repeat(1,3,1,1)), (torch.rand(input_images.contiguous()[:,:3].unsqueeze(0).shape), torch.rand(input_states.unsqueeze(0).shape), torch.rand(input_images.contiguous()[:,3:4].repeat(1,3,1,1).unsqueeze(0).shape)), car_sizes, n_models=10, lrt_z=0,
+                n_updates_z=0, infer_z=False, no_cuda=False, return_per_instance_values = False
+            )
+            print(pred['state_img.shape'].shape, pred['proximity'].shape, pred['lane'].shape)
+            images.append(pred['state_img'])
+            costs.append(pred['proximity'],pred['lane'])
+#             cost_sequence.append(cost)
+            
     input_state_tfinal = inputs['state'][-1]
 
     if mu is not None:
@@ -545,6 +562,8 @@ def main():
     total_images = 0
 
     for j in range(n_test):
+#         print(type(splits), len(splits['test_indx']), splits['test_indx'].shape, list(dataloader.car_sizes.keys())[0:5], list(dataloader.car_sizes[list(dataloader.car_sizes.keys())[0]].keys())[0:5],dataloader.car_sizes[list(dataloader.car_sizes.keys())[0]][list(dataloader.car_sizes[list(dataloader.car_sizes.keys())[0]].keys())[0]])
+        
         car_path = dataloader.ids[splits['test_indx'][j]]
         timeslot, car_id = utils.parse_car_path(car_path)
         car_sizes = torch.tensor(

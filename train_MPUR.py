@@ -89,6 +89,7 @@ def start(what, nbatches, npred, split='train', return_per_instance_values=False
                 model, inputs, targets, car_sizes, n_models=10, lrt_z=opt.lrt_z,
                 n_updates_z=opt.z_updates, infer_z=opt.infer_z, no_cuda=opt.no_cuda, return_per_instance_values = (True if evaluate else False)
             )
+#             print("costs: ",pred["proximity"].shape, pred['lane'].shape, pred['action'].shape, pred['offroad'].shape)
             pred['policy'] = pred['proximity'] + \
                              opt.u_reg * pred['uncertainty'] + \
                              opt.lambda_l * pred['lane'] + \
@@ -114,7 +115,8 @@ def start(what, nbatches, npred, split='train', return_per_instance_values=False
                         
                         total_losses[loss] += pred[loss]
                         global total_steps
-                        writer.add_scalar(f'BatchLoss/{what}_{loss}', pred[loss].detach().cpu().item(), total_steps)
+                        if writer is not None:
+                            writer.add_scalar(f'BatchLoss/{what}_{loss}', pred[loss].detach().cpu().item(), total_steps)
                         total_steps += 1
 #                     print(total_losses)
 #                         if what == 'valid':
@@ -586,6 +588,7 @@ elif opt.training_method == 'finetune_train':
     best_loss = 1000000
     patience = 0
     for i in range(500):
+#         valid_losses = start('valid', opt.epoch_size // 2, opt.npred, split='valid')
         train_losses = start('train', opt.epoch_size, opt.npred, split='finetune_train', threshold = 0)
         with torch.no_grad():  # Torch, please please please, do not track computations :)
             valid_losses = start('valid', opt.epoch_size // 2, opt.npred, split='valid')
@@ -637,7 +640,7 @@ elif opt.training_method == 'finetune_train':
         if writer is not None:
             writer.close()
             
-elif opt.training_method == 'finetune_sim'
+elif opt.training_method == 'finetune_sim':
     for i in range(500):
         train_losses = start('train', opt.epoch_size, opt.npred, split='finetune_sim', threshold = 0)
         with torch.no_grad():  # Torch, please please please, do not track computations :)
